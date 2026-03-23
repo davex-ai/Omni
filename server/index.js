@@ -1,6 +1,6 @@
 import cors from 'cors'
 import express from 'express'
-import { WebSocketServer } from 'ws'
+import { WebSocketServer, WebSocket } from 'ws'
 
 const app = express();
 app.use(cors());
@@ -18,7 +18,8 @@ wss.on("connection", (ws) => {
   clients.push(ws);
 
   ws.on("message", (data) => {
-    // Broadcast to everyone except sender
+    console.log("Received", data.toString());
+    
     clients.forEach((client) => {
       if (client !== ws && client.readyState === WebSocket.OPEN) {
         client.send(data);
