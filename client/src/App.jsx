@@ -2,10 +2,34 @@ import { useEffect, useState } from "react";
 
 function App() {
   const [cursors, setCursors] =  useState({});
+  const userId = Math.random().toString(36).substring(7)
+  const [smoothCursors, setSmoothCursors] = useState({})
+  const [clicks, setClicks] = useState([])
+
+  useEffect(() => {
+  const interval = setInterval(() => {
+    setSmoothCursors((prev) => {
+      const updated = {};
+
+      for (let id in cursors) {
+        const target = cursors[id];
+        const current = prev[id] || target;
+
+        updated[id] = {
+          x: current.x + (target.x - current.x) * 0.2,
+          y: current.y + (target.y - current.y) * 0.2,
+        };
+      }
+
+      return updated;
+    });
+  }, 16); // ~60fps
+
+  return () => clearInterval(interval);
+}, [cursors]);
 
   useEffect(() => {
   const ws = new WebSocket("ws://localhost:3001");
-  const userId = Math.random().toString(36).substring(7)
 
   let isRemoteScroll = false;
   let timeout;
@@ -51,6 +75,13 @@ function App() {
         ...prev, [data.userId]: { x: data.x, y: data.y }
       }))
     }
+
+    if (data.type === "click") {
+      setClicks((prev) => [...prev, {id: Math.random(), x: data.x, y: data.y }]);
+      setTimeout(() => {
+        setClicks((prev) => prev.slice(1))
+      }, 500)
+    }
   };
    const handleMouseMove = (e) => {
       if (ws.readyState === WebSocket.OPEN) {
@@ -70,6 +101,20 @@ function App() {
       );
     }
   })
+
+  window.addEventListener("click", (e) => {
+    if( ws.readyState === WebSocket.OPEN ) {
+      ws.send(
+        JSON.stringify({
+          type: "click",
+          userId,
+          x: e.clientX,
+          y: e.clientY
+        })
+      );
+    }
+  });
+
 
   return () => {
     window.removeEventListener("scroll", handleScroll); 
@@ -97,6 +142,23 @@ function App() {
             borderRadius: "50%",
             pointerEvents: "none",
             transform: "translate(-50%, -50%)"
+          }}
+        />
+      ))}
+      {clicks.map((click) => (
+        <div
+          key={click.id}
+          style={{ 
+            position: "fixed",
+            left: click.x,
+            top: click.y,
+            width: "20px",
+            height: "20px",
+            border: "2px solid blue",
+            borderRadius: "50%",
+            transform: "translate(-50%, -50%)",
+            pointerEvents: "none",
+            animation: "ping 0.5s ease-out",
           }}
         />
       ))}
