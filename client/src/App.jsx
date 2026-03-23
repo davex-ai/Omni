@@ -7,11 +7,9 @@ function App() {
   const [clicks, setClicks] = useState([]);
   const [text, setText] = useState("");
   
-  // Memoize userId so it doesn't change on re-renders
   const userId = useMemo(() => Math.random().toString(36).substring(7), []);
   const ws = useRef(null);
 
-  // 1. Handle local input changes
   const handleInput = (e) => {
     const value = e.target.value;
     setText(value);
@@ -21,7 +19,6 @@ function App() {
     }
   };
 
-  // 2. Smooth cursor interpolation logic
   useEffect(() => {
     const interval = setInterval(() => {
       setSmoothCursors((prev) => {
@@ -40,7 +37,6 @@ function App() {
     return () => clearInterval(interval);
   }, [cursors]);
 
-  // 3. WebSocket and Event Listener setup
   useEffect(() => {
     const socket = new WebSocket("ws://localhost:3001");
     ws.current = socket;
@@ -48,7 +44,6 @@ function App() {
     let isRemoteScroll = false;
     let scrollTimeout;
 
-    // --- Message Handler ---
     socket.onmessage = async (event) => {
       const rawData = event.data instanceof Blob ? await event.data.text() : event.data;
       const data = JSON.parse(rawData);
@@ -68,7 +63,6 @@ function App() {
       }
     };
 
-    // --- Window Event Listeners ---
     const handleScroll = () => {
       if (isRemoteScroll) {
         isRemoteScroll = false;
@@ -98,7 +92,6 @@ function App() {
     window.addEventListener("mousemove", handleMouseMove);
     window.addEventListener("click", handleClick);
 
-    // --- Cleanup ---
     return () => {
       window.removeEventListener("scroll", handleScroll);
       window.removeEventListener("mousemove", handleMouseMove);
