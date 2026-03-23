@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useMemo } from "react";
-
+import * as Y from 'yjs'
+import { WebsocketProvider } from "y-websocket"
 
 function App() {
   const [cursors, setCursors] = useState({});
@@ -9,13 +10,47 @@ function App() {
   
   const userId = useMemo(() => Math.random().toString(36).substring(7), []);
   const ws = useRef(null);
+  const ydocRef = useRef(null);
+  const providerRef = useRef(null);
+  const yTextRef = useRef(null);
+
+useEffect(() => {
+  const ydoc = new Y.Doc();
+  const provider = new WebsocketProvider(
+    "ws://localhost:1234",  
+    "omni-room",
+    ydoc
+  );
+
+  const yText = ydoc.getText("shared-text");
+
+  ydocRef.current = ydoc;
+  providerRef.current = provider;
+  yTextRef.current = yText;
+
+  const update = () => {
+    setText(yText.toString());
+  };
+
+  yText.observe(update);
+
+  return () => {
+    yText.unobserve(update);
+    provider.destroy();
+    ydoc.destroy();
+  };
+}, []);
+
 
   const handleInput = (e) => {
     const value = e.target.value;
-    setText(value);
+    const yText = yTextRef.current
+    if(!yText)return
+    const current = yText.toString()
 
-    if (ws.current?.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify({ type: "input", userId, value }));
+    if (value !== current) {
+      yText.delete(0, yText.length);
+      yText.insert(0, value);
     }
   };
 
@@ -58,9 +93,7 @@ function App() {
       } else if (data.type === "click") {
         setClicks((prev) => [...prev, { id: Math.random(), x: data.x, y: data.y }]);
         setTimeout(() => setClicks((prev) => prev.slice(1)), 500);
-      } else if (data.type === "input") {
-        setText(data.value);
-      }
+      } 
     };
 
     const handleScroll = () => {
@@ -76,9 +109,24 @@ function App() {
       }, 50);
     };
 
+    let lastSent = 0;
+
     const handleMouseMove = (e) => {
+      const now = Date.now();
+
+      if (now - lastSent < 50) return; // 20fps
+
+      lastSent = now;
+
       if (socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "cursor", userId, x: e.clientX, y: e.clientY }));
+        socket.send(
+          JSON.stringify({
+            type: "cursor",
+            userId,
+            x: e.clientX,
+            y: e.clientY,
+          })
+        );
       }
     };
 
