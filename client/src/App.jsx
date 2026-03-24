@@ -7,8 +7,13 @@ function App() {
   const [smoothCursors, setSmoothCursors] = useState({});
   const [clicks, setClicks] = useState([]);
   const [text, setText] = useState("");
+  const [role, setRole] = useState(null);
+const [controller, setController] = useState(null);
+const userId = useMemo(() => Math.random().toString(36).substring(7), []);
+
+const canControl =
+  role === "streamer" || controller === userId;
   
-  const userId = useMemo(() => Math.random().toString(36).substring(7), []);
   const ws = useRef(null);
   const ydocRef = useRef(null);
   const providerRef = useRef(null);
@@ -45,6 +50,7 @@ useEffect(() => {
   const handleInput = (e) => {
     const value = e.target.value;
     const yText = yTextRef.current
+    if (!canControl) return;
     if(!yText)return
     const current = yText.toString()
 
@@ -79,6 +85,15 @@ useEffect(() => {
     let isRemoteScroll = false;
     let scrollTimeout;
 
+      socket.onopen = () => {
+    socket.send(
+      JSON.stringify({
+        type: "join",
+        userId,
+      })
+    );
+  };
+
     socket.onmessage = async (event) => {
       const rawData = event.data instanceof Blob ? await event.data.text() : event.data;
       const data = JSON.parse(rawData);
@@ -94,6 +109,13 @@ useEffect(() => {
         setClicks((prev) => [...prev, { id: Math.random(), x: data.x, y: data.y }]);
         setTimeout(() => setClicks((prev) => prev.slice(1)), 500);
       } 
+      if (data.type === "role") {
+      setRole(data.role);
+      }
+
+      if (data.type === "control-update") {
+        setController(data.controller);
+      }
     };
 
     const handleScroll = () => {
@@ -192,9 +214,35 @@ useEffect(() => {
       <input
         value={text}
         onChange={handleInput}
+        disabled={!canControl}
         style={{ padding: "10px", fontSize: "16px", width: "300px", position: 'sticky', top: '20px' }}
         placeholder="Type something..."
       />
+
+      {role === "streamer" && (
+  <div style={{ position: "fixed", top: 10, right: 10 }}>
+    <button
+      onClick={() =>
+        ws.current.send(
+          JSON.stringify({
+            type: "grant-control",
+            targetUserId: Object.keys(cursors)[0],
+          })
+        )
+      }
+    >
+      Grant Control
+    </button>
+
+    <button
+      onClick={() =>
+        ws.current.send(JSON.stringify({ type: "revoke-control" }))
+      }
+    >
+      Revoke Control
+    </button>
+  </div>
+)}
     </div>
   );
 }
