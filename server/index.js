@@ -98,7 +98,19 @@ wss.on("connection", (ws) => {
     globalClients.delete(ws);
     globalUsers.delete(ws);
     broadcastGlobal({ type: "global-users", users: [...globalUsers.values()] });
+if (msg.type === "cursor" && !currentRoom) {
+  const userId = globalUsers.get(ws);
+  if (!userId) return;
 
+  broadcastGlobal({
+    type: "cursor",
+    userId,
+    x: msg.x,
+    y: msg.y,
+  });
+
+  return;
+}
     if (!currentRoom) return;
 
     const room = rooms[currentRoom];

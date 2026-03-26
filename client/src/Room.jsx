@@ -85,7 +85,6 @@ function Room() {
     let lastSent = 0;
 
     socket.onopen = () => {
-      socket.send(JSON.stringify({ type: "join-global", userId }));
       socket.send(JSON.stringify({ type: "join-room", roomId, userId, mode: "streamer-room" }));
     };
 
