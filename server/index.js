@@ -11,88 +11,157 @@ const server = app.listen(3001, () => {
 
 const wss = new WebSocketServer({ server });
 
-let clients = new Map(); // ws -> { userId, role }
-let currentController = null;
+let rooms = {}; // roomId → room object
+
+/*
+room = {
+  clients: Set(ws),
+  users: Map(ws → { userId, role }),
+  controller: userId | null
+}
+*/
 
 wss.on("connection", (ws) => {
-  console.log("New client connected");
+  console.log("🔌 Client connected");
+
+  let currentRoom = null;
 
   ws.on("message", (data) => {
     const msg = JSON.parse(data);
 
-    // 🟢 JOIN
-    if (msg.type === "join") {
-      const role = clients.size === 0 ? "streamer" : "viewer";
+    // ✅ JOIN ROOM
+    if (msg.type === "join-room") {
+      const { roomId, userId } = msg;
 
-      clients.set(ws, {
-        userId: msg.userId,
+      // ❗ VALIDATION: room must exist
+      if (!rooms[roomId]) {
+        ws.send(JSON.stringify({
+          type: "error",
+          message: "Room does not exist"
+        }));
+        return;
+      }
+
+      currentRoom = roomId;
+      const room = rooms[roomId];
+
+      const role = room.clients.size === 0 ? "streamer" : "viewer";
+
+      room.clients.add(ws);
+      room.users.set(ws, { userId, role });
+
+      ws.send(JSON.stringify({
+        type: "init",
         role,
-      });
+        controller: room.controller
+      }));
 
-      ws.send(JSON.stringify({ type: "role", role }));
+      console.log(`👤 ${userId} joined ${roomId} as ${role}`);
       return;
     }
 
-    const client = clients.get(ws);
-    if (!client) return;
+    // ✅ CREATE ROOM (NEW)
+    if (msg.type === "create-room") {
+      const { roomId, userId } = msg;
 
-    // 🟢 PERMISSION CHECK
+      rooms[roomId] = {
+        clients: new Set(),
+        users: new Map(),
+        controller: null,
+      };
+
+      console.log(`🏠 Room created: ${roomId}`);
+      return;
+    }
+
+    if (!currentRoom) return;
+
+    const room = rooms[currentRoom];
+    const sender = room.users.get(ws);
+    if (!sender) return;
+
     const canControl =
-      client.role === "streamer" ||
-      (currentController === client.userId);
+      sender.role === "streamer" ||
+      room.controller === sender.userId;
 
-    // 🟢 CONTROL EVENTS
+    // ✅ CONTROL
     if (msg.type === "grant-control") {
-      if (client.role !== "streamer") return;
+      if (sender.role !== "streamer") return;
 
-      currentController = msg.targetUserId;
+      room.controller = msg.targetUserId;
 
-      broadcast({
+      broadcast(room, {
         type: "control-update",
-        controller: currentController,
+        controller: room.controller
       });
 
       return;
     }
 
     if (msg.type === "revoke-control") {
-      if (client.role !== "streamer") return;
+      if (sender.role !== "streamer") return;
 
-      currentController = null;
+      room.controller = null;
 
-      broadcast({
+      broadcast(room, {
         type: "control-update",
-        controller: null,
+        controller: null
       });
 
       return;
     }
 
-    // 🟢 BLOCK UNAUTHORIZED USERS
+    // ✅ BLOCK UNAUTHORIZED INPUT
     if (["scroll", "cursor", "click"].includes(msg.type)) {
       if (!canControl) return;
-
-      broadcast(msg, ws);
     }
+
+    // ✅ ALWAYS INCLUDE USER ID
+    const enriched = {
+      ...msg,
+      userId: sender.userId
+    };
+
+    broadcast(room, enriched, ws);
   });
 
   ws.on("close", () => {
-    const client = clients.get(ws);
+    if (!currentRoom) return;
 
-    if (client && client.userId === currentController) {
-      currentController = null;
+    const room = rooms[currentRoom];
+    if (!room) return;
+
+    const user = room.users.get(ws);
+
+    if (user && user.role === "streamer") {
+      const next = [...room.users.values()].find(
+        (u) => u.userId !== user.userId
+      );
+
+      if (next) {
+        broadcast(room, {
+          type: "role-update",
+          newStreamer: next.userId
+        });
+      } else {
+        delete rooms[currentRoom];
+        console.log(`🧹 Deleted empty room ${currentRoom}`);
+      }
     }
 
-    clients.delete(ws);
-    console.log("Client disconnected");
+    room.clients.delete(ws);
+    room.users.delete(ws);
+
+    console.log("❌ Client disconnected");
   });
 });
 
-// 🔥 helper
-function broadcast(message, sender = null) {
-  clients.forEach((_, clientWs) => {
-    if (clientWs !== sender && clientWs.readyState === 1) {
-      clientWs.send(JSON.stringify(message));
+function broadcast(room, message, skip = null) {
+  const payload = JSON.stringify(message);
+
+  room.clients.forEach((client) => {
+    if (client !== skip && client.readyState === 1) {
+      client.send(payload);
     }
   });
 }
