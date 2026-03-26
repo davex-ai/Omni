@@ -14,8 +14,9 @@ app.post("/create-room", (req, res) => {
     clients: new Set(),
     users: new Map(),
     controller: null,
+    mode: null,
   };
-  console.log(`🏠 Room created: ${roomId}`);
+  console.log(`Room created: ${roomId}`);
   res.json({ roomId });
 });
 
@@ -25,12 +26,11 @@ const server = app.listen(3001, () => {
 
 const wss = new WebSocketServer({ server });
 
-let globalClients = new Set();
-let globalUsers = new Map();
+const globalClients = new Set();
+const globalUsers = new Map();
 
 wss.on("connection", (ws) => {
   globalClients.add(ws);
-  console.log("🔌 Client connected");
 
   let currentRoom = null;
 
@@ -39,51 +39,31 @@ wss.on("connection", (ws) => {
 
     if (msg.type === "join-global") {
       globalUsers.set(ws, msg.userId);
-      broadcastGlobal({
-        type: "user-joined-global",
-        users: [...globalUsers.values()],
-      });
+      broadcastGlobal({ type: "global-users", users: [...globalUsers.values()] });
       return;
     }
 
     if (msg.type === "join-room") {
-      const { roomId, userId } = msg;
+      const { roomId, userId, mode } = msg;
 
       if (!rooms[roomId]) {
-        rooms[roomId] = {
-          clients: new Set(),
-          users: new Map(),
-          controller: null,
-        };
+        rooms[roomId] = { clients: new Set(), users: new Map(), controller: null, mode };
       }
 
       currentRoom = roomId;
       const room = rooms[roomId];
-      const role = room.clients.size === 0 ? "streamer" : "viewer";
+      const isFirst = room.clients.size === 0;
+      const role = isFirst ? "streamer" : "viewer";
 
       room.clients.add(ws);
       room.users.set(ws, { userId, role });
 
       ws.send(JSON.stringify({ type: "init", role, controller: room.controller }));
 
-      broadcast(
-        room,
-        { type: "room-users", users: [...room.users.values()] },
-        ws
-      );
+      const userList = [...room.users.values()];
+      broadcast(room, { type: "room-users", users: userList });
 
-      console.log(`👤 ${userId} joined ${roomId} as ${role}`);
-      return;
-    }
-
-    if (msg.type === "create-room") {
-      const { roomId } = msg;
-      rooms[roomId] = {
-        clients: new Set(),
-        users: new Map(),
-        controller: null,
-      };
-      console.log(`🏠 Room created via WS: ${roomId}`);
+      console.log(`${userId} joined ${roomId} as ${role}`);
       return;
     }
 
@@ -93,8 +73,7 @@ wss.on("connection", (ws) => {
     const sender = room.users.get(ws);
     if (!sender) return;
 
-    const canControl =
-      sender.role === "streamer" || room.controller === sender.userId;
+    const canControl = sender.role === "streamer" || room.controller === sender.userId;
 
     if (msg.type === "grant-control") {
       if (sender.role !== "streamer") return;
@@ -110,7 +89,7 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    if (["scroll", "click"].includes(msg.type) && !canControl) return;
+    if (["scroll", "click", "input"].includes(msg.type) && !canControl) return;
 
     broadcast(room, { ...msg, userId: sender.userId }, ws);
   });
@@ -118,6 +97,7 @@ wss.on("connection", (ws) => {
   ws.on("close", () => {
     globalClients.delete(ws);
     globalUsers.delete(ws);
+    broadcastGlobal({ type: "global-users", users: [...globalUsers.values()] });
 
     if (!currentRoom) return;
 
@@ -125,26 +105,27 @@ wss.on("connection", (ws) => {
     if (!room) return;
 
     const user = room.users.get(ws);
-
     room.clients.delete(ws);
     room.users.delete(ws);
 
-    if (user && user.role === "streamer") {
-      const next = [...room.users.values()].find(
-        (u) => u.userId !== user.userId
-      );
-
-      if (next) {
-        broadcast(room, { type: "role-update", newStreamer: next.userId });
-      } else {
-        delete rooms[currentRoom];
-        console.log(`🧹 Deleted empty room ${currentRoom}`);
-      }
+    if (!room.clients.size) {
+      delete rooms[currentRoom];
+      console.log(`Deleted empty room ${currentRoom}`);
+      return;
     }
 
-    broadcast(room, { type: "room-users", users: [...room.users.values()] });
-
-    console.log("❌ Client disconnected");
+    if (user && user.role === "streamer") {
+      const nextEntry = [...room.users.entries()][0];
+      if (nextEntry) {
+        const [nextWs, nextUser] = nextEntry;
+        nextUser.role = "streamer";
+        room.users.set(nextWs, nextUser);
+        nextWs.send(JSON.stringify({ type: "role-update", newRole: "streamer" }));
+        broadcast(room, { type: "room-users", users: [...room.users.values()] }, nextWs);
+      }
+    } else {
+      broadcast(room, { type: "room-users", users: [...room.users.values()] });
+    }
   });
 });
 
@@ -160,8 +141,6 @@ function broadcast(room, message, skip = null) {
 function broadcastGlobal(message) {
   const payload = JSON.stringify(message);
   globalClients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(payload);
-    }
+    if (client.readyState === WebSocket.OPEN) client.send(payload);
   });
 }
