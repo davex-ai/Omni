@@ -1,9 +1,27 @@
 import cors from "cors";
 import express from "express";
-import { WebSocketServer } from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 
 const app = express();
 app.use(cors());
+app.use(express.json());
+
+const rooms = {};
+const globalClients = new Set();
+const globalUsers = new Map();
+
+app.post("/create-room", (req, res) => {
+  const roomId = Math.random().toString(36).substring(7);
+
+  rooms[roomId] = {
+    clients: new Set(),
+    users: new Map(),
+    controller: null,
+  };
+
+  console.log(`Room created: ${roomId}`);
+  res.json({ roomId });
+});
 
 const server = app.listen(3001, () => {
   console.log("Server running on port 3001");
@@ -11,85 +29,154 @@ const server = app.listen(3001, () => {
 
 const wss = new WebSocketServer({ server });
 
-let globalClients = new Set();
-let globalUsers = new Map(); // ws → userId 
+/* =========================
+   HELPERS
+========================= */
 
-/*
-room = {
-  clients: Set(ws),
-  users: Map(ws → { userId, role }),
-  controller: userId | null
+function getRoom(ws) {
+  if (!ws.state.roomId) return null;
+  return rooms[ws.state.roomId];
 }
-*/
+
+function isInRoom(ws) {
+  return ws.state.mode === "room";
+}
+
+function broadcast(room, message, skip = null) {
+  const payload = JSON.stringify(message);
+
+  room.clients.forEach((client) => {
+    if (client !== skip && client.readyState === WebSocket.OPEN) {
+      client.send(payload);
+    }
+  });
+}
+
+function broadcastGlobal(message) {
+  const payload = JSON.stringify(message);
+
+  globalClients.forEach((client) => {
+    if (
+      client.readyState === WebSocket.OPEN &&
+      client.state?.mode === "global"   // 🔥 ADD THIS
+    ) {
+      client.send(payload);
+    }
+  });
+}
+/* =========================
+   CONNECTION
+========================= */
 
 wss.on("connection", (ws) => {
-  globalClients.add(ws)
-  console.log("🔌 Client connected");
+  
+  ws.state = {
+    mode: "global",
+    roomId: null,
+    userId: null,
+  };
 
-  let currentRoom = null;
+  /* =========================
+     MESSAGE HANDLER
+  ========================= */
 
-  ws.on("message", (data) => {
-    const msg = JSON.parse(data);
+  ws.on("message", (raw) => {
+    const msg = JSON.parse(raw.toString());
+    console.log("SERVER RECEIVED:", msg);
 
-    // ✅ JOIN ROOM
+    /* =========================
+       JOIN GLOBAL
+    ========================= */
     if (msg.type === "join-global") {
+      
+  if (ws.state.mode === "global") globalClients.add(ws);
+      ws.state.mode = "global";
+      ws.state.userId = msg.userId;
+
       globalUsers.set(ws, msg.userId);
 
       broadcastGlobal({
-        type: "user-joined-global",
-        users: [...globalUsers.values()]
-      })
+        type: "global-users",
+        users: [...globalUsers.values()],
+      });
+
+      return;
+    }
+
+    /* =========================
+       JOIN ROOM
+    ========================= */
+    if (msg.type === "join-room") {
       const { roomId, userId } = msg;
 
-      // ❗ VALIDATION: room must exist
       if (!rooms[roomId]) {
-        ws.send(JSON.stringify({
-          type: "error",
-          message: "Room does not exist"
-        }));
-        return;
+        rooms[roomId] = {
+          clients: new Set(),
+          users: new Map(),
+          controller: null,
+        };
       }
 
-      broadcast(room, {
-  type: "room-users",
-  users: [...room.users.values()],
-});
-
-      currentRoom = roomId;
       const room = rooms[roomId];
 
-      const role = room.clients.size === 0 ? "streamer" : "viewer";
+      // ❌ REMOVE FROM GLOBAL
+      globalClients.delete(ws);
+      globalUsers.delete(ws);
+
+      // ✅ SET STATE
+      ws.state.mode = "room";
+      ws.state.roomId = roomId;
+      ws.state.userId = userId;
+      ws.removeAllListeners("cursor")
+      ws.removeAllListeners("click")
+
+      const isFirst = room.clients.size === 0;
+      const role = isFirst ? "streamer" : "viewer";
 
       room.clients.add(ws);
       room.users.set(ws, { userId, role });
 
-      ws.send(JSON.stringify({
-        type: "init",
-        role,
-        controller: room.controller
-      }));
+      ws.send(
+        JSON.stringify({
+          type: "init",
+          role,
+          controller: room.controller,
+        })
+      );
 
-      console.log(`👤 ${userId} joined ${roomId} as ${role}`);
+      broadcast(room, {
+        type: "room-users",
+        users: [...room.users.values()],
+      });
+
       return;
     }
 
-    // ✅ CREATE ROOM (NEW)
-    if (msg.type === "create-room") {
-      const { roomId, userId } = msg;
+    /* =========================
+       GLOBAL EVENTS
+    ========================= */
+    if (ws.state.mode === "global") {
+      const userId = ws.state.userId;
+      if (!userId) return;
 
-      rooms[roomId] = {
-        clients: new Set(),
-        users: new Map(),
-        controller: null,
-      };
+      if (msg.type === "cursor" || msg.type === "click") {
+        broadcastGlobal({
+          type: msg.type,
+          userId,
+          x: msg.x,
+          y: msg.y,
+        });
+      }
 
-      console.log(`🏠 Room created: ${roomId}`);
       return;
     }
 
-    if (!currentRoom) return;
+    /* =========================
+       ROOM EVENTS
+    ========================= */
+    const room = getRoom(ws);
+    if (!room) return;
 
-    const room = rooms[currentRoom];
     const sender = room.users.get(ws);
     if (!sender) return;
 
@@ -97,7 +184,7 @@ wss.on("connection", (ws) => {
       sender.role === "streamer" ||
       room.controller === sender.userId;
 
-    // ✅ CONTROL
+    /* control logic */
     if (msg.type === "grant-control") {
       if (sender.role !== "streamer") return;
 
@@ -105,7 +192,7 @@ wss.on("connection", (ws) => {
 
       broadcast(room, {
         type: "control-update",
-        controller: room.controller
+        controller: room.controller,
       });
 
       return;
@@ -118,76 +205,93 @@ wss.on("connection", (ws) => {
 
       broadcast(room, {
         type: "control-update",
-        controller: null
+        controller: null,
       });
 
       return;
     }
 
-    // ✅ BLOCK UNAUTHORIZED INPUT
-    if (["scroll", "click"].includes(msg.type)) {
-      if (!canControl) return;
+    /* control protection */
+    if (
+      (msg.type === "scroll" ||
+        msg.type === "click" ||
+        msg.type === "input") &&
+      !canControl
+    ) {
+      return;
     }
 
-    // ✅ ALWAYS INCLUDE USER ID
-    const enriched = {
-      ...msg,
-      userId: sender.userId
-    };
-
-    broadcast(room, enriched, ws);
+    broadcast(
+      room,
+      {
+        ...msg,
+        userId: sender.userId,
+      },
+      ws
+    );
   });
+
+  /* =========================
+     DISCONNECT
+  ========================= */
 
   ws.on("close", () => {
     globalClients.delete(ws);
     globalUsers.delete(ws);
 
-    if (!currentRoom) return;
+    broadcastGlobal({
+      type: "global-users",
+      users: [...globalUsers.values()],
+    });
 
-    const room = rooms[currentRoom];
+    if (!isInRoom(ws)) return;
+
+    const room = getRoom(ws);
     if (!room) return;
 
     const user = room.users.get(ws);
 
-    if (user && user.role === "streamer") {
-      const next = [...room.users.values()].find(
-        (u) => u.userId !== user.userId
-      );
-
-      if (next) {
-        broadcast(room, {
-          type: "role-update",
-          newStreamer: next.userId
-        });
-      } else {
-        delete rooms[currentRoom];
-        console.log(`🧹 Deleted empty room ${currentRoom}`);
-      }
-    }
-
     room.clients.delete(ws);
     room.users.delete(ws);
 
-    console.log("❌ Client disconnected");
+    /* delete empty room */
+    if (room.clients.size === 0) {
+      delete rooms[ws.state.roomId];
+      console.log(`Deleted empty room ${ws.state.roomId}`);
+      return;
+    }
+
+    /* streamer reassignment */
+    if (user?.role === "streamer") {
+      const nextEntry = [...room.users.entries()][0];
+
+      if (nextEntry) {
+        const [nextWs, nextUser] = nextEntry;
+
+        nextUser.role = "streamer";
+        room.users.set(nextWs, nextUser);
+
+        nextWs.send(
+          JSON.stringify({
+            type: "role-update",
+            newRole: "streamer",
+          })
+        );
+
+        broadcast(
+          room,
+          {
+            type: "room-users",
+            users: [...room.users.values()],
+          },
+          nextWs
+        );
+      }
+    } else {
+      broadcast(room, {
+        type: "room-users",
+        users: [...room.users.values()],
+      });
+    }
   });
 });
-
-function broadcast(room, message, skip = null) {
-  const payload = JSON.stringify(message);
-
-  room.clients.forEach((client) => {
-    if (client !== skip && client.readyState === 1) {
-      client.send(payload);
-    }
-  });
-}
-
-function broadcastGlobal(message) {
-  const payload = JSON.stringify(message);
-
-  globalClients.forEach((client) => {
-    if (client.readyState === 1) {
-      client.send(payload);
-    }
-  });
-}
