@@ -6,8 +6,10 @@ import { useParams } from "react-router-dom";
 const COLORS = ["#f43f5e", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#6366f1", "#a855f7"];
 
 function colorForId(id) {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = id.charCodeAt(i) + ((hash << 5) - hash);
+  let hash = 5381;  
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 33) ^ id.charCodeAt(i);
+  }
   return COLORS[Math.abs(hash) % COLORS.length];
 }
 
@@ -28,6 +30,23 @@ function Room() {
     if (!id) { id = Math.random().toString(36).substring(7); localStorage.setItem("userId", id); }
     return id;
   }, []);
+
+  const userProfile = useMemo(() => {
+  let profile = JSON.parse(localStorage.getItem("profile"));
+
+  if (!profile) {
+    profile = {
+      id: userId,
+      name: "User-" + userId.slice(0, 4),
+      avatar: userId.slice(0, 2).toUpperCase(),
+      color: colorForId(userId),
+      status: "online",
+    };
+    localStorage.setItem("profile", JSON.stringify(profile));
+  }
+
+  return profile;
+}, [userId]);
 
   const roleRef = useRef(null);
   const controllerRef = useRef(null);
@@ -86,7 +105,7 @@ function Room() {
     let lastSent = 0;
 
     socket.onopen = () => {
-      socket.send(JSON.stringify({ type: "join-room", roomId, userId, mode: "streamer-room" }));
+      socket.send(JSON.stringify({ type: "join-room", roomId, userId, mode: "streamer-room", user: userProfile }));
     };
 
     socket.onmessage = async (event) => {
@@ -214,30 +233,27 @@ function Room() {
           )}
 
           {viewers.map((u) => (
-            <div key={u.userId} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                <div style={{
-                  width: "8px", height: "8px", borderRadius: "50%",
-                  background: colorForId(u.userId),
-                }} />
-                <span style={{ fontSize: "12px", color: "#aaa", fontFamily: "monospace" }}>
-                  {u.userId.slice(0, 6)}
-                </span>
-              </div>
-              <button
-                onClick={() => ws.current.send(JSON.stringify({ type: "grant-control", targetUserId: u.userId }))}
-                style={{
-                  padding: "3px 8px", fontSize: "11px", fontWeight: 600,
-                  background: controller === u.userId ? "#1a1a1a" : "#6366f1",
-                  color: controller === u.userId ? "#f43f5e" : "#fff",
-                  border: controller === u.userId ? "1px solid #f43f5e" : "none",
-                  borderRadius: "5px", cursor: "pointer",
-                }}
-              >
-                {controller === u.userId ? "Revoke" : "Grant"}
-              </button>
-            </div>
-          ))}
+  <div key={u.id} style={{ display:"flex", gap:"8px", alignItems:"center" }}>
+    
+    {/* avatar */}
+    <div style={{
+      width: 28,
+      height: 28,
+      borderRadius: "50%",
+      background: u.color,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      fontSize: "12px",
+      fontWeight: "bold",
+    }}>
+      {u.avatar}
+    </div>
+
+    {/* name */}
+    <span>{u.name}</span>
+  </div>
+))}
 
           {controller && (
             <button

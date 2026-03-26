@@ -134,7 +134,7 @@ wss.on("connection", (ws) => {
       const role = isFirst ? "streamer" : "viewer";
 
       room.clients.add(ws);
-      room.users.set(ws, { userId, role });
+      room.users.set(ws, { ...msg.user, role });
 
       ws.send(
         JSON.stringify({
