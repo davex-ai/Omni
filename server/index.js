@@ -11,7 +11,8 @@ const server = app.listen(3001, () => {
 
 const wss = new WebSocketServer({ server });
 
-let rooms = {}; // roomId → room object
+let globalClients = new Set();
+let globalUsers = new Map(); // ws → userId 
 
 /*
 room = {
@@ -22,6 +23,7 @@ room = {
 */
 
 wss.on("connection", (ws) => {
+  globalClients.add(ws)
   console.log("🔌 Client connected");
 
   let currentRoom = null;
@@ -30,7 +32,13 @@ wss.on("connection", (ws) => {
     const msg = JSON.parse(data);
 
     // ✅ JOIN ROOM
-    if (msg.type === "join-room") {
+    if (msg.type === "join-global") {
+      globalUsers.set(ws, msg.userId);
+
+      broadcastGlobal({
+        type: "user-joined-global",
+        users: [...globalUsers.values()]
+      })
       const { roomId, userId } = msg;
 
       // ❗ VALIDATION: room must exist
@@ -41,6 +49,11 @@ wss.on("connection", (ws) => {
         }));
         return;
       }
+
+      broadcast(room, {
+  type: "room-users",
+  users: [...room.users.values()],
+});
 
       currentRoom = roomId;
       const room = rooms[roomId];
@@ -112,7 +125,7 @@ wss.on("connection", (ws) => {
     }
 
     // ✅ BLOCK UNAUTHORIZED INPUT
-    if (["scroll", "cursor", "click"].includes(msg.type)) {
+    if (["scroll", "click"].includes(msg.type)) {
       if (!canControl) return;
     }
 
@@ -126,6 +139,9 @@ wss.on("connection", (ws) => {
   });
 
   ws.on("close", () => {
+    globalClients.delete(ws);
+    globalUsers.delete(ws);
+
     if (!currentRoom) return;
 
     const room = rooms[currentRoom];
@@ -161,6 +177,16 @@ function broadcast(room, message, skip = null) {
 
   room.clients.forEach((client) => {
     if (client !== skip && client.readyState === 1) {
+      client.send(payload);
+    }
+  });
+}
+
+function broadcastGlobal(message) {
+  const payload = JSON.stringify(message);
+
+  globalClients.forEach((client) => {
+    if (client.readyState === 1) {
       client.send(payload);
     }
   });

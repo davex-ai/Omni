@@ -2,21 +2,14 @@ import { useNavigate } from "react-router-dom";
 
 export default function Home() {
   const navigate = useNavigate();
-const createRoom = () => {
-  const roomId = Math.random().toString(36).substring(7);
+const createRoom = async () => {
+  const res = await fetch("http://localhost:3001/create-room", {
+    method: "POST",
+  });
 
-  const ws = new WebSocket("ws://localhost:3001");
-
-  ws.onopen = () => {
-    ws.send(JSON.stringify({
-      type: "create-room",
-      roomId,
-      userId: "temp"
-    }));
-
-    navigate(`/room/${roomId}`);
-  };
-};
+  const data = await res.json();
+  navigate(`/room/${data.roomId}`);
+};;
   return (
     <div>
       <h1>Omni</h1>
