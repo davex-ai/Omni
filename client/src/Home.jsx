@@ -15,6 +15,8 @@ export default function Home() {
   const [cursors, setCursors] = useState({});
   const [smoothCursors, setSmoothCursors] = useState({});
   const [totalUsers, setTotalUsers] = useState(0);
+  const [trails, setTrails] = useState({});
+  const [clicks, setClicks] = useState([]);
 
   const cursorsRef = useRef({});
 
@@ -49,6 +51,7 @@ export default function Home() {
         return updated;
       });
     }, 16);
+    
     return () => clearInterval(interval);
   }, []);
 
@@ -64,6 +67,8 @@ export default function Home() {
     socket.onmessage = async (event) => {
       const raw = event.data instanceof Blob ? await event.data.text() : event.data;
       const data = JSON.parse(raw);
+      console.log("CLIENT RECEIVED ",data);
+      
 
       if (data.type === "global-users") {
         setTotalUsers(data.users.length);
@@ -72,11 +77,27 @@ export default function Home() {
 
       if (data.userId === userId) return;
 
+if (data.type === "click") {
+  setClicks((prev) => [
+    ...prev,
+    { id: Math.random(), x: data.x, y: data.y, uid: data.userId }
+  ]);
+
+  setTimeout(() => {
+    setClicks((prev) => prev.slice(1));
+  }, 600);
+}
+
       if (data.type === "cursor") {
         cursorsRef.current = {
           ...cursorsRef.current,
           [data.userId]: { x: data.x, y: data.y },
         };
+        setTrails(prev => {
+  const existing = prev[data.userId] || [];
+  const next = [...existing, { x: data.x, y: data.y }].slice(-8);  
+  return { ...prev, [data.userId]: next };
+});
         setCursors((prev) => ({
           ...prev,
           [data.userId]: { x: data.x, y: data.y },
@@ -88,6 +109,7 @@ export default function Home() {
       const now = Date.now();
       if (now - lastSent < 50) return;
       lastSent = now;
+  console.log("SENDING CURSOR", e.clientX, e.clientY);
 
       socket.send(JSON.stringify({
         type: "cursor",
@@ -95,17 +117,29 @@ export default function Home() {
         y: e.clientY,
       }));
     };
+    const handleClick = (e) => {  
+      console.log("SENDING CLICK", e.clientX, e.clientY);
+    
+      if (socket.readyState === WebSocket.OPEN)
+        socket.send(JSON.stringify({
+          type: "click",
+          x: e.clientX,
+          y: e.clientY
+        }));
+    };
 
     window.addEventListener("mousemove", move);
+    window.addEventListener("click", handleClick);
 
     return () => {
       window.removeEventListener("mousemove", move);
+      window.removeEventListener("click", handleClick);
       socket.close();
     };
   }, [userId]);
 
   return (
-    <div style={{ minHeight: "100vh", background: "#0f0f0f", color: "#fff" }}>
+    <div style={{ minHeight: "100vh",  color: "#fff" }}>
       <div style={{ position: "fixed", top: 0, width: "100%", padding: "16px" }}>
         {totalUsers} users creating chaos
       </div>
@@ -119,7 +153,22 @@ export default function Home() {
         <input value={joinId} onChange={(e)=>setJoinId(e.target.value)} />
         <button onClick={()=>joinId && navigate(`/room/${joinId}`)}>Join</button>
       </div>
-
+{Object.entries(trails).map(([id, points]) =>
+  points.map((p, i) => (
+    <div key={id + "-" + i} style={{
+      position: "fixed",
+      left: p.x,
+      top: p.y,
+      width: 6,
+      height: 6,
+      borderRadius: "50%",
+      background: colorForId(id),
+      opacity: i / points.length,
+      pointerEvents: "none",
+      transform: "translate(-50%, -50%)",
+    }} />
+  ))
+)}
       {/* cursors */}
       {Object.entries(smoothCursors).map(([id,pos]) => (
         <div key={id} style={{
@@ -135,6 +184,19 @@ export default function Home() {
             background:colorForId(id)
           }} />
         </div>
+      ))}{clicks.map((click) => (
+        <div key={click.id} style={{
+          position: "fixed",
+          left: click.x,
+          top: click.y,
+          width: "24px",
+          height: "24px",
+          border: `2px solid ${colorForId(click.uid)}`,
+          borderRadius: "50%",
+          transform: "translate(-50%, -50%)",
+          pointerEvents: "none",
+          animation: "ripple 0.6s ease-out forwards",
+        }} />
       ))}
     </div>
   );

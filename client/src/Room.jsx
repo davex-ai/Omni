@@ -19,6 +19,7 @@ function Room() {
   const [role, setRole] = useState(null);
   const [controller, setController] = useState(null);
   const [roomUsers, setRoomUsers] = useState([]);
+  const [trails, setTrails] = useState({});
 
   const { roomId } = useParams();
 
@@ -103,6 +104,11 @@ function Room() {
       else if (data.type === "cursor") {
         cursorsRef.current = { ...cursorsRef.current, [data.userId]: { x: data.x, y: data.y } };
         setCursors((prev) => ({ ...prev, [data.userId]: { x: data.x, y: data.y } }));
+        setTrails(prev => {
+  const existing = prev[data.userId] || [];
+  const next = [...existing, { x: data.x, y: data.y }].slice(-8);  
+  return { ...prev, [data.userId]: next };
+});
       }
       else if (data.type === "click") {
         setClicks((prev) => [...prev, { id: Math.random(), x: data.x, y: data.y, uid: data.userId }]);
@@ -247,7 +253,22 @@ function Room() {
           )}
         </div>
       )}
-
+{Object.entries(trails).map(([id, points]) =>
+  points.map((p, i) => (
+    <div key={id + "-" + i} style={{
+      position: "fixed",
+      left: p.x,
+      top: p.y,
+      width: 6,
+      height: 6,
+      borderRadius: "50%",
+      background: colorForId(id),
+      opacity: i / points.length,
+      pointerEvents: "none",
+      transform: "translate(-50%, -50%)",
+    }} />
+  ))
+)}
       {Object.entries(smoothCursors).map(([id, pos]) => (
         <div key={id} style={{
           position: "fixed", left: pos.x, top: pos.y,
