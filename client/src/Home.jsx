@@ -49,7 +49,7 @@ export default function Home() {
 }, [userId]);
 
   const createRoom = async () => {
-    const res = await fetch("http://localhost:3001/create-room", { method: "POST" });
+    const res = await fetch("https://omni-xz1v.onrender.com/create-room", { method: "POST" });
     const data = await res.json();
     navigate(`/room/${data.roomId}`);
   };
@@ -76,7 +76,7 @@ export default function Home() {
 
   // websocket
   useEffect(() => {
-    const socket = new WebSocket("ws://localhost:3001");
+    const socket = new WebSocket("wss://omni-xz1v.onrender.com");
     let lastSent = 0;
 
     socket.onopen = () => {
