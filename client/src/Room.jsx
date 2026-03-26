@@ -97,7 +97,7 @@ function Room() {
   }, []);
 
   useEffect(() => {
-    const socket = new WebSocket("ws://localhost:3001");
+    const socket = new WebSocket("wss://omni-xz1v.onrender.com");
     ws.current = socket;
 
     let isRemoteScroll = false;
