@@ -4,8 +4,10 @@ import { useNavigate } from "react-router-dom";
 const COLORS = ["#f43f5e","#f97316","#eab308","#22c55e","#06b6d4","#6366f1","#a855f7"];
 
 function colorForId(id) {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = id.charCodeAt(i) + ((hash << 5) - hash);
+  let hash = 5381;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash * 33) ^ id.charCodeAt(i);
+  }
   return COLORS[Math.abs(hash) % COLORS.length];
 }
 
@@ -28,6 +30,23 @@ export default function Home() {
     }
     return id;
   }, []);
+
+  const userProfile = useMemo(() => {
+  let profile = JSON.parse(localStorage.getItem("profile"));
+
+  if (!profile) {
+    profile = {
+      id: userId,
+      name: "User-" + userId.slice(0, 4),
+      avatar: userId.slice(0, 2).toUpperCase(),
+      color: colorForId(userId),
+      status: "online",
+    };
+    localStorage.setItem("profile", JSON.stringify(profile));
+  }
+
+  return profile;
+}, [userId]);
 
   const createRoom = async () => {
     const res = await fetch("http://localhost:3001/create-room", { method: "POST" });
